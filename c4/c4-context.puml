@@ -1,0 +1,38 @@
+@startuml c4-context
+!include <C4/C4_Context>
+
+title SMSGate — C4 уровень 1: Контекст системы
+
+LAYOUT_TOP_DOWN()
+
+Person(dev, "Разработчик клиента", "Встраивает отправку SMS в продукт своей компании")
+Person(lead, "Техлид / CTO", "Следит за доставляемостью, ключами и расходами")
+Person(acc, "Бухгалтер / владелец", "Пополняет баланс, получает закрывающие документы")
+
+System(smsgate, "SMSGate", "SMS API для российского B2B: принимает сообщения, доставляет через операторов, ведёт баланс и статусы")
+
+System_Ext(clientApp, "Приложение клиента", "Сайт, CRM или бэкенд клиента, который отправляет SMS через API")
+System_Ext(providers, "SMS-провайдеры", "Агрегаторы и шлюзы операторов, через которые уходит трафик")
+System_Ext(carriers, "Мобильные операторы", "МТС, Билайн, МегаФон, T2")
+Person_Ext(subscriber, "Абонент", "Покупатель или пациент клиента, получает SMS")
+System_Ext(payments, "Платёжный сервис", "Приём оплаты картой")
+System_Ext(email, "Email-сервис", "Письма подтверждения и уведомления")
+
+Rel(dev, smsgate, "Регистрируется, получает ключ, читает документацию")
+Rel(lead, smsgate, "Управляет ключами, именами отправителей, смотрит статистику")
+Rel(acc, smsgate, "Пополняет баланс, скачивает документы")
+
+Rel(clientApp, smsgate, "Отправляет SMS, запрашивает статус")
+Rel_Back(clientApp, smsgate, "Вебхуки о смене статуса (MLP)")
+
+Rel(smsgate, providers, "Передаёт сообщения")
+Rel_Back(smsgate, providers, "Отчёты о доставке")
+Rel(providers, carriers, "Передают SMS")
+Rel(carriers, subscriber, "Доставляют SMS")
+
+Rel(smsgate, payments, "Создаёт платёж")
+Rel_Back(smsgate, payments, "Уведомление об оплате")
+Rel(smsgate, email, "Отправляет письма")
+
+SHOW_LEGEND()
+@enduml

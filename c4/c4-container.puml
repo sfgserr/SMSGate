@@ -1,0 +1,43 @@
+@startuml c4-container
+!include <C4/C4_Container>
+
+title SMSGate — C4 уровень 2: Контейнеры (MVP)
+
+LAYOUT_TOP_DOWN()
+
+Person(dev, "Разработчик / техлид / бухгалтер", "Сотрудник компании-клиента")
+System_Ext(clientApp, "Приложение клиента", "Бэкенд, CRM или сайт клиента")
+
+System_Boundary(smsgate, "SMSGate") {
+    Container(spa, "Личный кабинет", "React, TypeScript", "Регистрация, ключи, быстрый старт, журнал сообщений, баланс")
+    Container(docs, "Документация", "Статика, Scalar + openapi.yaml", "Описание API, примеры запросов, кнопка «попробовать»")
+    Container(nginx, "Reverse proxy", "nginx", "TLS, ограничение частоты запросов, раздача статики, проксирование в API")
+    Container(api, "API", "ASP.NET Core 10, модульный монолит", "Модули Identity, Messaging, Billing. Публичный REST /v1, API кабинета, приём отчётов о доставке и уведомлений об оплате")
+    Container(worker, "Воркер доставки", ".NET 10 Worker Service", "Забирает сообщения из очереди, выбирает провайдера, повторяет при сбоях, списывает или возвращает резерв")
+    ContainerDb(db, "База данных", "PostgreSQL 17 (managed, РФ)", "Аккаунты, хэши ключей, сообщения, журнал баланса, очередь outbox")
+}
+
+System_Ext(providers, "SMS-провайдеры", "Агрегаторы и шлюзы операторов")
+System_Ext(payments, "Платёжный сервис", "Эквайринг")
+System_Ext(email, "Email-сервис", "Транзакционные письма")
+
+Rel(dev, nginx, "Открывает кабинет и документацию", "HTTPS")
+Rel(clientApp, nginx, "POST /v1/messages, GET /v1/messages/{id}", "HTTPS, JSON")
+
+Rel(nginx, spa, "Отдаёт статику")
+Rel(nginx, docs, "Отдаёт статику")
+Rel(spa, nginx, "Вызывает API кабинета", "HTTPS, JSON")
+Rel(nginx, api, "Проксирует запросы", "HTTP")
+
+Rel(api, db, "Сообщение + резерв + задача в очереди одной транзакцией", "SQL")
+Rel(worker, db, "Берёт задачи: SELECT … FOR UPDATE SKIP LOCKED", "SQL")
+
+Rel(worker, providers, "Передаёт SMS", "HTTPS")
+Rel(providers, nginx, "Отчёты о доставке (DLR)", "HTTPS callback")
+Rel(api, payments, "Создаёт платёж", "HTTPS")
+Rel(payments, nginx, "Уведомление об оплате", "HTTPS webhook")
+Rel(api, email, "Письма подтверждения", "HTTPS API")
+Rel(worker, clientApp, "Вебхуки о статусе (MLP)", "HTTPS")
+
+SHOW_LEGEND()
+@enduml
