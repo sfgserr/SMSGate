@@ -1,0 +1,194 @@
+openapi: 3.1.0
+info:
+  title: SMSGate API
+  version: 1.0.0
+  description: SMS API для российского B2B. Контракт MVP — отправка SMS и статус доставки.
+servers:
+  - url: https://api.smsgate.ru/v1
+security:
+  - bearerAuth: []
+
+paths:
+  /messages:
+    post:
+      summary: Отправить SMS
+      operationId: createMessage
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Повтор с тем же ключом в течение 24 часов вернёт исходный ответ без нового SMS.
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMessageRequest' }
+      responses:
+        '202':
+          description: Сообщение принято в очередь, деньги зарезервированы.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/X-Request-Id' }
+            Idempotent-Replayed:
+              description: true, если это повтор по Idempotency-Key.
+              schema: { type: boolean }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '401': { $ref: '#/components/responses/Error' }
+        '402': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /messages/{id}:
+    get:
+      summary: Получить статус сообщения
+      operationId: getMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^msg_[A-Z0-9]+$' }
+      responses:
+        '200':
+          description: Сообщение с историей статусов.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/X-Request-Id' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API-ключ sk_test_… (тестовый режим) или sk_live_… (боевой).
+
+  headers:
+    X-Request-Id:
+      description: Id запроса для поиска в логах поддержкой.
+      schema: { type: string, example: req_7Hc2Lw9 }
+
+  responses:
+    Error:
+      description: Ошибка в едином формате.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Превышен лимит 50 запросов в секунду.
+      headers:
+        Retry-After:
+          description: Через сколько секунд можно повторить запрос.
+          schema: { type: integer, example: 1 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    CreateMessageRequest:
+      type: object
+      required: [to, text]
+      properties:
+        to:
+          type: string
+          description: Мобильный номер РФ (+79…, 79…, 89…).
+          example: '+79991234567'
+        text:
+          type: string
+          minLength: 1
+          description: До 6 сегментов (GSM7 — 160/153 символа, UCS2 — 70/67).
+          example: 'Ваш код подтверждения: 4821'
+        sender:
+          type: string
+          description: Одобренное имя отправителя. Без него используется общее имя сервиса.
+          example: MyShop
+        client_ref:
+          type: string
+          maxLength: 64
+          example: order-1042
+
+    Message:
+      type: object
+      required: [id, status, to, segments, encoding, price, mode, created_at]
+      properties:
+        id: { type: string, example: msg_01JC8Z3KQ7V4M2 }
+        status: { $ref: '#/components/schemas/MessageStatus' }
+        to: { type: string, example: '+79991234567' }
+        sender: { type: string, example: MyShop }
+        client_ref: { type: [string, 'null'], example: order-1042 }
+        segments: { type: integer, minimum: 1, maximum: 6, example: 1 }
+        encoding: { type: string, enum: [GSM7, UCS2] }
+        price: { $ref: '#/components/schemas/Money' }
+        charged:
+          type: boolean
+          description: Списаны ли деньги. false, пока резерв, и при rejected.
+        mode: { type: string, enum: [test, live] }
+        carrier:
+          type: [string, 'null']
+          enum: [mts, beeline, megafon, t2, other, null]
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/MessageError'
+            - type: 'null'
+        status_history:
+          type: array
+          items:
+            type: object
+            required: [status, at]
+            properties:
+              status: { $ref: '#/components/schemas/MessageStatus' }
+              at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    MessageStatus:
+      type: string
+      enum: [queued, sent, delivered, undelivered, rejected]
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: string
+          pattern: '^\d+\.\d{2}$'
+          description: Строка, а не число, чтобы не терять копейки.
+          example: '3.20'
+        currency: { type: string, enum: [RUB] }
+
+    MessageError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: carrier_rejected }
+        message: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, docs_url, request_id]
+          properties:
+            code:
+              type: string
+              enum:
+                - unauthorized
+                - insufficient_funds
+                - test_key_restricted
+                - idempotency_key_reused
+                - invalid_phone
+                - text_too_long
+                - sender_not_approved
+                - rate_limited
+                - message_not_found
+            message: { type: string }
+            docs_url: { type: string, format: uri }
+            request_id: { type: string }
